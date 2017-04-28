@@ -1,0 +1,11 @@
+{
+    "require": {
+		"ratchet/pawl": "^0.2.3",
+        "monolog/monolog": "^1.22",
+        "silex/silex": "~2.0"
+    },
+	"autoload": {
+		"psr-4": {"SamsungTV\\": "src/"}
+	}
+
+}
