@@ -7,13 +7,40 @@ use React\EventLoop\LoopInterface;
 use Ratchet\Client\Connector;
 use Psr\Log\LoggerInterface;
 
+/**
+ * Remote control class for Samsung 2016+ TVs using the websocket interface
+ */
 class Remote
 {
+	/**
+	 * @var LoggerInterface
+	 * Logger for debugging
+	 */
 	private $logger;
+
+	/**
+	 * @var string
+	 * Host to connect to
+	 */
 	private $sHost;
+
+	/**
+	 * @var integer
+	 * Port to connect to
+	 */
 	private $iPort = 8001;
+
+	/**
+	 * @var string
+	 * Application name
+	 */
 	private $sAppName = "PHP Remote";
 
+	/**
+	 * @var array
+	 * Array of valid keys that can be sent. 
+	 * This list is taken from https://github.com/Bntdumas/SamsungIPRemote/blob/master/samsungKeyCodes.txt
+	 */
 	private $aValidKeys = array(
 		"0","1","2","3","4","5","6","7","8","9","11","12","4_3","16_9","3SPEED","AD","ADDDEL","ALT_MHP","ANGLE","ANTENA","ANYNET","ANYVIEW","APP_LIST","ASPECT",
 		"AUTO_ARC_ANTENNA_AIR","AUTO_ARC_ANTENNA_CABLE","AUTO_ARC_ANTENNA_SATELLITE","AUTO_ARC_ANYNET_AUTO_START","AUTO_ARC_ANYNET_MODE_OK","AUTO_ARC_AUTOCOLOR_FAIL",
@@ -34,29 +61,55 @@ class Remote
 		"ZOOM_IN","ZOOM_MOVE","ZOOM_OUT"
 	);
 
+	/**
+	 * Constructor takes a logger for debugging
+	 * @param LoggerInterface $logger Logger (eg. monolog)
+	 */
 	public function __construct(LoggerInterface $logger)
 	{
 		$this->logger = $logger;
 	}
 
+	/**
+	 * Set the host to connect to 
+	 * Should probably be an IP as the libraries use global DNS rather than your local resolver
+	 * @param string $sHost Hostname or IP address
+	 * @return Remote Return $this to allow for fluid interface
+	 */
 	public function setHost($sHost)
 	{
 		$this->sHost = $sHost;
 		return $this;
 	}
 
+	/**
+	 * Set the port to connect to (defaults to 8001)
+	 * @param integer $iPort Port to use
+	 * @return Remote Return $this to allow fluid interface
+	 */
 	public function setPort($iPort)
 	{
 		$this->iPort = $iPort;
 		return $this;
 	}
 
+	/**
+	 * Set the application name to identify this App to the TV as
+	 * (You may need to authorised this application throguh the TV interface)
+	 * @param string $sAppName
+	 * @return Remote Return $this to allow fluid interface
+	 */
 	public function setAppName($sAppName)
 	{
 		$this->sAppName = $sAppName;
 		return $this;
 	}
 
+	/**
+	 * Validate a key against the list of valid keys
+	 * @param string $sKey
+	 * @returns boolean True if valid else false
+	 */
 	private function validateKey($sKey)
 	{
 		if (substr($sKey,0,4) == "KEY_")
@@ -64,6 +117,9 @@ class Remote
 		return in_array($sKey,$this->aValidKeys);
 	}
 
+	/**
+	 * Create the JSON message to send in the websocket request
+	 */
 	private function getKeypressMessage($sKey)
 	{
 		$aMessage = array(
@@ -80,13 +136,28 @@ class Remote
 
 	}
 
+	/**
+	 * Wrapper function to send an individual key to the TV
+	 * @param string $sKey Key to send
+	 */
 	public function sendKey($sKey)
 	{
 		$this->sendKeys(array($sKey));
 	}
 
+	/**
+	 * Send keypresses to TV
+	 * @param string[] $aKeys List of keypresses to send
+	 */
 	public function sendKeys($aKeys)
 	{
+		// check requested keys are valid before we start
+		foreach($aKeys AS $sKey)
+		{
+			if (!$this->validateKey($sKey))
+				throw new RemoteException("Invalid key: $sKey");
+		}
+
 		$sAppName = utf8_encode(base64_encode($this->sAppName));
 		$sURL = "ws://{$this->sHost}:{$this->iPort}/api/v2/channels/samsung.remote.control?name=$sAppName";
 
@@ -102,6 +173,8 @@ class Remote
 				if ($oMsg->event == "ms.channel.connect")
 				{
 					$this->logger->debug("Connected");
+
+					// queue up the keys in advance with a one second delay between each
 					$iTimer = 0;
 					foreach($aKeys AS $sKey)
 					{
@@ -111,6 +184,8 @@ class Remote
 							$conn->send($jsonMessage);
 						});
 					}
+
+					// once all keys have been sent, disconnect the socket
 					$loop->addTimer($iTimer,function () use ($conn) {
 						$this->logger->debug("Closing websocket");		
 						$conn->close();
@@ -119,12 +194,14 @@ class Remote
 				else
 				{
 					$this->logger->error("Unknown message: $msg");
+					throw new RemoteException("Unknown message received: $msg");
 				}
 			});
 		
 
 		}, function ($e) {
 			$this->logger->error("Could not connect: {$e->getMessage()}");
+			throw new RemoteException("Could not connect: ".$e->getMessage(),NULL,$e);
 		});
 
 		$loop->run();
