@@ -12,6 +12,8 @@ $oLogger->pushHandler(new StreamHandler('php://stdout', Logger::DEBUG));
 
 $sKey = $_SERVER['argv'][1];
 
+$aConfig = parse_ini_file("remote.ini");
+
 $oRemote = new Remote($oLogger);
-$oRemote->setHost("192.168.10.36")->sendKey($sKey);
+$oRemote->setHost($aConfig['targetip'])->sendKey($sKey);
 

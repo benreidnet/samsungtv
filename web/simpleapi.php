@@ -18,8 +18,10 @@ use Symfony\Component\Yaml\Yaml;
 $oLogger = new Logger("remote");
 $oLogger->pushHandler(new ErrorLogHandler(ErrorLogHandler::OPERATING_SYSTEM,logger::INFO));
 
+$aConfig = parse_ini_file(dirname(__DIR__)."/remote.ini");
+
 $oRemote = new Remote($oLogger);
-$oRemote->setHost("192.168.10.36");
+$oRemote->setHost($aConfig['targetip']);
 
 
 
