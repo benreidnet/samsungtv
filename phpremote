@@ -10,8 +10,11 @@ use Monolog\Handler\StreamHandler;
 $oLogger = new Logger("remote");
 $oLogger->pushHandler(new StreamHandler('php://stdout', Logger::DEBUG));
 
-$sKey = $_SERVER['argv'][1];
+$sKey = strtoupper($_SERVER['argv'][1]);
 
 $oRemote = new Remote($oLogger);
-$oRemote->setHost("192.168.10.36")->sendKey($sKey);
+$aConfig = parse_ini_file("remote.ini");
+
+$oRemote = new Remote($oLogger);
+$oRemote->setHost($aConfig['targetip'])->sendKey($sKey);
 
