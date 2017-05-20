@@ -25,10 +25,17 @@ $oRemote->setHost("192.168.10.36");
 
 $app = new Silex\Application();
 
-$app->post("/samsung/remote/key/{key}", function($key) use ($app,$oRemote) {
-	$sKey = "KEY_".strtoupper($app->escape($key));
-	$oRemote->sendKey($sKey);
-	return "Sent $sKey\n";
+$app->post("/samsung/remote/key/{key}", function($key) use ($app,$oRemote,$oLogger) {
+	try {
+		$sKey = "KEY_".strtoupper($app->escape($key));
+		$oRemote->sendKey($sKey);
+		return "Sent $sKey\n";
+	}
+	catch (\Exception $e)
+	{
+		$oLogger->error($e->getMessage());
+		throw $e;
+	}
 });
 
 $app->run();
