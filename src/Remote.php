@@ -113,7 +113,7 @@ class Remote
 	private function validateKey($sKey)
 	{
 		if (substr($sKey,0,4) == "KEY_")
-			$sKey = substr($sKey,5);
+			$sKey = substr($sKey,4);
 		return in_array($sKey,$this->aValidKeys);
 	}
 
