@@ -6,6 +6,7 @@ use React\EventLoop\Factory as ReactFactory;
 use React\EventLoop\LoopInterface;
 use Ratchet\Client\Connector;
 use Psr\Log\LoggerInterface;
+use Ratchet\Client\WebSocket;
 
 /**
  * Remote control class for Samsung 2016+ TVs using the websocket interface
@@ -35,6 +36,13 @@ class Remote
 	 * Application name
 	 */
 	private $sAppName = "PHP Remote";
+
+	/**
+	 * @var array
+	 * Queue of keypresses
+	 */
+	private $aQueue;
+
 
 	/**
 	 * @var array
@@ -136,26 +144,76 @@ class Remote
 
 	}
 
+
 	/**
-	 * Wrapper function to send an individual key to the TV
-	 * @param string $sKey Key to send
+	 * Add a keypress to the queue
+	 * @param string $sKey Key to add
+	 * @param float $fDelay Delay after keypress before next key
 	 */
-	public function sendKey($sKey)
+	public function queueKey($sKey,$fDelay = 1.0)
 	{
-		$this->sendKeys(array($sKey));
+		if (!$this->validateKey($sKey))
+			throw new \UnexpectedValueException("Invalid key: $sKey");
+
+		$this->aQueue[] = array("key"=>$sKey,"delay"=>$fDelay);
 	}
 
 	/**
-	 * Send keypresses to TV
-	 * @param string[] $aKeys List of keypresses to send
+	 * Clear any outstanding items in the key queue
 	 */
-	public function sendKeys($aKeys)
+	public function clearQueue()
 	{
-		// check requested keys are valid before we start
-		foreach($aKeys AS $sKey)
+		$this->aQueue = array();
+	}
+
+	/**
+	 * Wrapper function to send an individual key to the TV (clears the queue first)
+	 * @param string $sKey Key to send
+	 * @param float $fDelay Delay after keypress
+	 */
+	public function sendKey($sKey,$fDelay = 1.0)
+	{
+		$this->clearQueue();
+		$this->queueKey($sKey,$fDelay);
+		$this->sendQueue();
+	}
+
+	/**
+	 * Pop the top key and send it, then schedule the next keypress
+	 * @param \Ratchet\Client\WebSocket $conn
+	 * @param \React\EventLoop\LoopInterface $loop
+	 */
+	private function sendQueueKeys(WebSocket $conn,LoopInterface $loop)
+	{
+		$aKeyDef = array_pop($this->aQueue);
+		if (!is_null($aKeyDef))
 		{
-			if (!$this->validateKey($sKey))
-				throw new RemoteException("Invalid key: $sKey");
+			$sKey = $aKeyDef['key'];
+			$jsonMessage = $this->getKeypressMessage($sKey);
+			$this->logger->debug("Sending $sKey...");
+			$conn->send($jsonMessage);
+
+			$loop->addTimer($aKeyDef['delay'],function () use ($conn,$loop)	{
+				$this->sendQueueKeys($conn,$loop);
+			});
+		}
+		else
+		{
+			// all keys sent, so disconnect socket
+			$this->logger->debug("Closing websocket");		
+			$conn->close();
+		}
+	}
+
+	/**
+	 * Send queued keypresses to TV
+	 */
+	public function sendQueue()
+	{
+		if (count($this->aQueue) == 0)
+		{
+			$this->logger->warn("No keys to send");
+			return;
 		}
 
 		$sAppName = utf8_encode(base64_encode($this->sAppName));
@@ -167,29 +225,13 @@ class Remote
 		$connector = new Connector($loop);
 		$subProtocols = [];
 		$headers = [];
-		$connector($sURL,$subProtocols,$headers)->then(function(\Ratchet\Client\WebSocket $conn) use ($aKeys,$loop) {
-			$conn->on('message', function(\Ratchet\RFC6455\Messaging\MessageInterface $msg) use ($conn,$loop,$aKeys) {
+		$connector($sURL,$subProtocols,$headers)->then(function(WebSocket $conn) use ($loop) {
+			$conn->on('message', function(\Ratchet\RFC6455\Messaging\MessageInterface $msg) use ($conn,$loop) {
 				$oMsg = json_decode($msg);
 				if ($oMsg->event == "ms.channel.connect")
 				{
 					$this->logger->debug("Connected");
-
-					// queue up the keys in advance with a one second delay between each
-					$iTimer = 0;
-					foreach($aKeys AS $sKey)
-					{
-						$loop->addTimer($iTimer++,function () use ($conn,$sKey) {
-							$jsonMessage = $this->getKeypressMessage($sKey);
-							$this->logger->debug("Sending $sKey...");
-							$conn->send($jsonMessage);
-						});
-					}
-
-					// once all keys have been sent, disconnect the socket
-					$loop->addTimer($iTimer,function () use ($conn) {
-						$this->logger->debug("Closing websocket");		
-						$conn->close();
-					});
+					$this->sendQueueKeys($conn,$loop);
 				}
 				else
 				{
